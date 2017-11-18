@@ -1,0 +1,3 @@
+more-itertools
+icrawler
+opencv
