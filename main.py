@@ -17,17 +17,19 @@ import time
 
 
 def find_matching_id(id_dataset, embedding):
-    threshold = 2.1
+    threshold = 1.45
     min_dist = 10.0
     matching_id = None
-
+    accuracy = None
     for id_data in id_dataset:
         dist = get_embedding_distance(id_data.embedding, embedding)
         print(dist)
         if dist < threshold and dist < min_dist:
             min_dist = dist
             matching_id = id_data.name
-    return matching_id, min_dist
+            percent = min(((1.8 - dist) * 90), 90)
+            accuracy = ' {:.0f}%'.format(percent)
+    return matching_id, min_dist, accuracy
 
 
 def get_embedding_distance(emb1, emb2):
@@ -128,12 +130,12 @@ def test_run(pnet, rnet, onet, sess, images_placeholder, phase_train_placeholder
 
     for i in range(len(embs)):
         misc.imsave('outfile' + str(i) + '.jpg', aligned_images[i])
-        matching_id, dist = find_matching_id(id_dataset, embs[i, :])
+        matching_id, dist, _ = find_matching_id(id_dataset, embs[i, :])
         if matching_id:
             print('Found match %s for %s! Distance: %1.4f' %
                   (matching_id, aligned_image_paths[i], dist))
         else:
-            print('Couldn\'t fint match for %s' % (aligned_image_paths[i]))
+            print('Couldn\'t find match for %s' % (aligned_image_paths[i]))
 
 
 def main(args):
@@ -153,14 +155,83 @@ def main(args):
 
             test_run(pnet, rnet, onet, sess, images_placeholder,
                      phase_train_placeholder, embeddings, id_dataset, args.test_folder)
-
-            cap = cv2.VideoCapture(0)
-            frame_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-
             show_landmarks = False
             show_bb = False
             show_id = True
             show_fps = False
+            if args.slides:
+                image_names = [f for f in os.listdir(
+                    args.test_folder) if not f.startswith('.')]
+                image_paths = [os.path.join(args.test_folder, img)
+                               for img in image_names]
+                for i in range(len(image_paths)):
+                    frame = cv2.imread(image_paths[i], 1)
+                    face_patches, padded_bounding_boxes, landmarks = detect_and_align.align_image(
+                        frame, pnet, rnet, onet)
+                    if len(face_patches) > 0:
+                        face_patches = np.stack(face_patches)
+                        feed_dict = {images_placeholder: face_patches,
+                                     phase_train_placeholder: False}
+                        embs = sess.run(embeddings, feed_dict=feed_dict)
+                        for i in range(len(embs)):
+                            bb = padded_bounding_boxes[i]
+
+                            matching_id, dist, accuracy = find_matching_id(
+                                id_dataset, embs[i, :])
+                            if matching_id:
+                                print('Hi %s! Distance: %1.4f' %
+                                      (matching_id, dist))
+                            else:
+                                matching_id = 'You are special!'
+                                print('You are special!')
+
+                            if show_id:
+                                font = cv2.FONT_HERSHEY_SIMPLEX
+                                cv2.putText(
+                                    frame, matching_id + accuracy, (bb[0], bb[3]), font, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+
+                            if show_bb:
+                                cv2.rectangle(
+                                    frame, (bb[0], bb[1]), (bb[2], bb[3]), (255, 0, 0), 2)
+
+                            if show_landmarks:
+                                for j in range(5):
+                                    size = 1
+                                    top_left = (
+                                        int(landmarks[i, j]) - size, int(landmarks[i, j + 5]) - size)
+                                    bottom_right = (
+                                        int(landmarks[i, j]) + size, int(landmarks[i, j + 5]) + size)
+                                    cv2.rectangle(frame, top_left,
+                                                  bottom_right, (255, 0, 255), 2)
+                    cv2.imshow('frame', frame)
+
+                    key = cv2.waitKey(0)
+                    if key == ord('q'):
+                        break
+                    elif key == ord('l'):
+                        show_landmarks = not show_landmarks
+                        cv2.imshow('frame', frame)
+                    elif key == ord('b'):
+                        show_bb = not show_bb
+                        cv2.imshow('frame', frame)
+                    elif key == ord('i'):
+                        show_id = not show_id
+                        cv2.imshow('frame', frame)
+                    elif key == ord('f'):
+                        show_fps = not show_fps
+                        cv2.imshow('frame', frame)
+                    elif key == ord('n'):
+                        continue
+                else:
+                    print('Couldn\'t find a face')
+
+            if args.cam:
+                pass
+            else:
+                sys.exit()
+            cap = cv2.VideoCapture(0)
+            frame_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+
             while(True):
                 start = time.time()
                 _, frame = cap.read()
@@ -178,19 +249,19 @@ def main(args):
                     for i in range(len(embs)):
                         bb = padded_bounding_boxes[i]
 
-                        matching_id, dist = find_matching_id(
+                        matching_id, dist, accuracy = find_matching_id(
                             id_dataset, embs[i, :])
                         if matching_id:
                             print('Hi %s! Distance: %1.4f' %
                                   (matching_id, dist))
                         else:
-                            matching_id = 'Unkown'
-                            print('Unkown! Couldn\'t fint match.')
+                            matching_id = 'You are special!'
+                            print('Unknown! Couldn\'t fint match.')
 
                         if show_id:
                             font = cv2.FONT_HERSHEY_SIMPLEX
                             cv2.putText(
-                                frame, matching_id, (bb[0], bb[3]), font, 1, (255, 255, 255), 1, cv2.LINE_AA)
+                                frame, matching_id, (bb[0], bb[3]), font, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
 
                         if show_bb:
                             cv2.rectangle(
@@ -245,6 +316,8 @@ def parse_arguments(argv):
                         help='Folder containing ID folders')
     parser.add_argument('--test_folder', type=str,
                         help='Folder containing test images.', default=None)
+    parser.add_argument('--cam', action='store_true')
+    parser.add_argument('--slides', action='store_true')
     return parser.parse_args(argv)
 
 

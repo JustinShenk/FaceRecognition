@@ -20,7 +20,8 @@ def get_id_data(id_folder, pnet, rnet, onet, sess, embeddings, images_placeholde
             continue
         id_dir = os.path.join(id_folder, id_name)
         image_names = os.listdir(id_dir)
-        image_paths = [os.path.join(id_dir, img) for img in image_names]
+        image_paths = [os.path.join(id_dir, img)
+                       for img in image_names if not img.startswith('.')]
         for image_path in image_paths:
             id_dataset.append(ID_Data(id_name, image_path))
 
